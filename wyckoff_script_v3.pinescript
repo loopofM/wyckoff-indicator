@@ -1,0 +1,110 @@
+//@version=6
+indicator("Ultimate Wyckoff Indicator V3 (Refined)", overlay=true)
+
+// Parameters
+swingLength = input.int(10, title="Swing Length for Accumulation/Distribution Detection")
+volLength = input.int(20, title="Volume Moving Average Length")
+volMultiplier = input.float(1.5, title="Volume Spike Multiplier")
+usePriceAsVolume = input.bool(false, title="Use Price Instead of Volume (for Indices)")
+atrLength = input.int(14, title="ATR Length for Volatility-based Zones")
+emaLength = input.int(50, title="Trend Confirmation EMA Length")
+minEventSpacing = input.int(10, title="Minimum Event Spacing (Bars)")
+patternLength = input.int(7, title="Pattern Recognition Length")
+riskRewardFactor = input.float(2.0, title="Risk/Reward Ratio Factor")
+
+mtfTimeframes = input.timeframe("60", title="Higher Timeframe for Confirmation")
+mtfConfirmingEMA = input.int(100, title="EMA Length for Higher Timeframe")
+
+trendEMA = ta.ema(close, emaLength)
+isUptrend = close > trendEMA
+isDowntrend = close < trendEMA
+
+mtfEMA = request.security(syminfo.tickerid, mtfTimeframes, ta.ema(close, mtfConfirmingEMA))
+isMTFUptrend = close > mtfEMA
+isMTFDowntrend = close < mtfEMA
+
+effectiveVolume = usePriceAsVolume ? hlc3 : volume
+volMA = ta.sma(effectiveVolume, volLength)
+isVolSpike = effectiveVolume > volMA * volMultiplier
+
+swingHigh = ta.highest(high, swingLength) == high
+swingLow = ta.lowest(low, swingLength) == low
+
+var float lastResistance = na
+var float lastSupport = na
+
+if swingHigh
+    lastResistance := high
+if swingLow
+    lastSupport := low
+
+plot(lastResistance, color=color.red, title="Resistance Level", linewidth=1, style=plot.style_linebr)
+plot(lastSupport, color=color.green, title="Support Level", linewidth=1, style=plot.style_linebr)
+
+atr = ta.atr(atrLength)
+smaClose = ta.sma(close, swingLength)
+smaAtr = ta.sma(atr, swingLength)
+
+isAccumulation = close < smaClose and atr < smaAtr and isUptrend and isMTFUptrend
+isDistribution = close > smaClose and atr < smaAtr and isDowntrend and isMTFDowntrend
+
+buyingClimax = isVolSpike and swingHigh
+sellingClimax = isVolSpike and swingLow
+
+phaseDuration = bar_index - ta.valuewhen(isAccumulation or isDistribution, bar_index, 0)
+isProlongedPhase = phaseDuration > 10
+
+isImportantBC = buyingClimax and isUptrend and close == lastResistance and isMTFUptrend
+isImportantSC = sellingClimax and isDowntrend and close == lastSupport and isMTFDowntrend
+
+var float lastEventTime = na
+displayEvent = (isImportantBC or isImportantSC) and (na(lastEventTime) or (bar_index - lastEventTime >= minEventSpacing))
+
+if displayEvent
+    lastEventTime := bar_index
+
+bcMarker = isImportantBC and displayEvent
+scMarker = isImportantSC and displayEvent
+
+prominentBC = isImportantBC and effectiveVolume == ta.highest(effectiveVolume, 20)
+prominentSC = isImportantSC and effectiveVolume == ta.highest(effectiveVolume, 20)
+
+if prominentBC
+    label.new(bar_index, high + atr * 0.05, "BC: High Volume at Resistance\nPossible market reversal", style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.normal)
+    lastEventTime := bar_index
+    alert("Prominent Buying Climax Detected: High Volume at Resistance!", alert.freq_once_per_bar_close)
+
+if prominentSC
+    // Plot SC label (Selling Climax) with text description
+    label.new(bar_index, low - atr * 0.05, "SC: High Volume at Support\nPossible market reversal", style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.normal)
+    lastEventTime := bar_index
+    alert("Prominent Selling Climax Detected: High Volume at Support!", alert.freq_once_per_bar_close)
+
+plotshape(series=bcMarker, location=location.abovebar, color=color.blue, style=shape.triangleup, size=size.large, title="BC Visual Marker")
+plotshape(series=scMarker, location=location.belowbar, color=color.orange, style=shape.triangledown, size=size.large, title="SC Visual Marker")
+
+basis = ta.sma(close, 20)
+dev = ta.stdev(close, 20)
+upperBB = basis + dev * 2
+lowerBB = basis - dev * 2
+plot(upperBB, color=color.red, title="Upper Bollinger Band", linewidth=1)
+plot(lowerBB, color=color.green, title="Lower Bollinger Band", linewidth=1)
+
+rsiValue = ta.rsi(close, 14)
+rsiLow = ta.lowestbars(rsiValue, 14)
+priceHigh = high
+isRSIDivergence = priceHigh > priceHigh[1] and rsiValue < rsiValue[1]
+plotshape(series=isRSIDivergence, location=location.abovebar, color=color.purple, style=shape.triangledown, title="RSI Divergence")
+
+supportLevel = low - ta.atr(14)
+resistanceLevel = high + ta.atr(14)
+plot(supportLevel, color=color.green, title="Dynamic Support", linewidth=1, style=plot.style_line)
+plot(resistanceLevel, color=color.red, title="Dynamic Resistance", linewidth=1, style=plot.style_line)
+
+fastEMA = ta.ema(close, 9)
+slowEMA = ta.ema(close, 21)
+bullishCrossover = ta.crossover(fastEMA, slowEMA)
+bearishCrossover = ta.crossunder(fastEMA, slowEMA)
+
+plotshape(series=bullishCrossover, location=location.belowbar, color=color.green, style=shape.labelup, title="Bullish Crossover")
+plotshape(series=bearishCrossover, location=location.abovebar, color=color.red, style=shape.labeldown, title="Bearish Crossover")
